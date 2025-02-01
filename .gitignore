@@ -1,0 +1,4 @@
+/target
+src/data/facebook100txt/*
+src/output/*
+src/plot_figures.asv
