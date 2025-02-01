@@ -26,12 +26,14 @@ struct Args {
     length: bool,
 }
 
-//Call with: cargo run [HW1] [options]
-//HW1 Options:
-//		[-n or --name]  file/folder name (no extension or "_attr")
-//		[-f]			specifies to run on every file within target folder, rather than on a single data set
-//		[-d]			compute degree measures
-//		[-l]			compute distance measures
+/// Call with: cargo run [--release] -- [HW1] [options]
+/// Can also use cargo run -- --help to view full auto-generated
+/// options list as they might not all be here
+/// HW1 Options:
+///		[-n]  			file/folder name (no extension or "_attr")
+///		[-f]			specifies to run on every file within target folder, rather than on a single data set
+///		[-d]			compute degree measures
+///		[-l]			compute distance measures
 fn main() -> anyhow::Result<()> {
     let now = Instant::now();
     let args = Args::parse();
@@ -41,6 +43,9 @@ fn main() -> anyhow::Result<()> {
         let mut edge_data = vec![];
         let mut filename_nodes = format!("src/data/{}_attr.txt", args.name);
 		let mut filename_edges = format!("src/data/{}.txt", args.name);
+		// filepath management, just getting all filenames from the folder
+		// should be in same position in vecs, unless something fails weirdly
+		// does assume that any *_attr.txt file has a corresponding *.txt
         if args.folder {
             let foldername = &format!("src/data/{}", args.name);
             let paths = read_dir(foldername).unwrap();
@@ -84,6 +89,7 @@ fn main() -> anyhow::Result<()> {
                 network.add_edge(edge.from, edge.to)?;
             }
             //dbg!(network.clone());
+            //The fast stuff - mean degree and mean squared degree
             if args.degree {
                 let degree_file = File::options()
                     .append(true)
@@ -95,10 +101,12 @@ fn main() -> anyhow::Result<()> {
                 let mean_square_degree = network.mean_square_degree();
 
                 //output to hw1_degree_data.csv
+                //also recording number of nodes and edges for sanity checks
                 to_csv(&name, &[mean_degree, mean_square_degree], &[network.total_edges/2,network.nodes.len() as u64],degree_file)?;
                 println!(".");
             }
-
+            //mgd, diameter, and largest connected component
+			//This takes a long time to run - about 5.5 hours for the facebook100 dataset
             if args.length {
                 let distance_file = File::options()
                     .append(true)

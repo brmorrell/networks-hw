@@ -1,6 +1,7 @@
 //! An abstracted node.
 
 /// Abstracts over a single node in a network.
+/// TODO: change to `Vertex` to avoid ambiguity with possible `Network` trait
 pub trait Node:
     Default + std::fmt::Debug + std::fmt::Display + PartialEq + Eq + Copy + Clone + std::hash::Hash + Ord + PartialOrd
 {
