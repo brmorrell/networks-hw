@@ -8,6 +8,7 @@
 //! indicating that an edge exists between those two nodes.
 
 use serde::Deserialize;
+use crate::node::Node;
 
 /// A record of a node
 ///
@@ -37,6 +38,21 @@ pub fn parse_nodes<R: std::io::Read>(input: R) -> Result<Vec<NodeData>, csv::Err
         .collect()
 }
 
+/// Parse a file-like object into a vector of nodes - nodes are u64s here
+///
+pub fn parse_basic_nodes<R: std::io::Read>(input: R) -> Result<Vec<u64>, csv::Error> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(b'\t')
+        .comment(Some(b'#'))
+        .from_reader(input);
+
+    rdr.deserialize()
+        // `Result` implements fromiterator, so when we collect this it will give us the first
+        // error if there are any errors, or else will give us the vector of [`NodeData`]s.
+        .collect()
+}
+
 /// A record of a edge
 ///
 /// This represents a single row of the edges file.
@@ -59,6 +75,32 @@ pub fn parse_edges<R: std::io::Read>(input: R) -> Result<Vec<Edge>, csv::Error> 
         // `Result` implements fromiterator, so when we collect this it will give us the first
         // error if there are any errors, or else will give us the vector of [`Edge`]s.
         .collect()
+}
+
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+pub struct Adjacency<N: Node = u64> {
+	pub node_id: N,
+	pub name: String,
+	pub id_again: N,
+	pub degree: u64,
+	pub edges: Vec<N>,
+}
+
+pub fn parse_adjacency_list<R: std::io::Read>(input: R) -> Result<Vec<Adjacency<u64>>, csv::Error> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .delimiter(b' ')
+        .comment(Some(b'#'))
+        .from_reader(input);
+
+	let mut end_list = vec![];
+    for result in rdr.deserialize() {
+        let record: Adjacency<u64> = result?;
+        end_list.push(record);
+    }
+    Ok(end_list)
+        
 }
 
 #[cfg(test)]
