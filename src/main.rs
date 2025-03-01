@@ -6,7 +6,7 @@ use std::collections::{HashSet,HashMap};
 use rand::Rng;
 
 
-use hw5352::{hw1::parse_edges, hw1::parse_nodes, hw1::parse_basic_nodes, hw1::parse_adjacency_list, output::to_csv, SimpleNetwork};
+use hw5352::{hw1::parse_edges, hw1::parse_nodes, hw1::AttrNode, hw1::parse_basic_nodes, hw1::parse_attr_nodes, hw1::parse_adjacency_list, output::to_csv, SimpleNetwork, statistic::remove_attrs, statistic::infer_attrs, statistic::remove_edges, statistic::jaccard_scores, statistic::dp_scores, statistic::sp_scores, statistic::roc};
 
 use clap::Parser;
 
@@ -29,11 +29,19 @@ struct Args {
     length: bool,
     
     #[clap(long, short, action)]
+    attr_inf: bool,
+    
+    #[clap(long, short, action)]
+    edge_inf: bool,
+    
+    #[clap(long, short, action)]
     cnull_model: bool,
     
     #[clap(long, short, action)]
     strogatz: bool,
 }
+//TODO: add documentation
+//good luck reading it until then
 
 /// Call with: cargo run [--release] -- [HW1] [options]
 /// Can also use cargo run -- --help to view full auto-generated
@@ -48,6 +56,8 @@ struct Args {
 /// 	[-c]			config model rewiring, gather stats at each step
 /// W2 Options:
 /// 	[-c]			generate null model for C and mgd using config model
+/// 	[-a]			delete and infer node attributes
+/// 	[-e]			edge inference
 /// W3 Options:			(adjacency list; harmonic centrality)
 
 fn main() -> anyhow::Result<()> {
@@ -255,34 +265,225 @@ fn main() -> anyhow::Result<()> {
 				filename_edges = edge_data[i].clone();
 			}
 
-            println!("Opening {}",filename_edges.clone());
-            let edges_file = File::open(filename_edges.clone())?;
+    		
             
-            let path = Path::new(&filename_edges);
-            let name = path.file_stem().unwrap().to_str().unwrap();
-            
-            let edges = parse_edges(edges_file)?;
-
-            let nodes;
-			if filename_nodes != "" {
+            //doing hw3 node attribute inference
+			if args.attr_inf {
+				println!("Opening {}",filename_edges.clone());
+	            let edges_file = File::open(filename_edges.clone())?;
+	            
+	            let path = Path::new(&filename_edges);
+	            let name = path.file_stem().unwrap().to_str().unwrap();
+	            
+	            let edges = parse_edges(edges_file)?;
+	
 				println!("Opening {}",filename_nodes.clone());
 				let nodes_file = File::open(filename_nodes.clone())?;
-				nodes = parse_basic_nodes(nodes_file)?;
-			} else {
-				nodes = edges.clone().iter().flat_map(|edge| [edge.from, edge.to]).collect::<Vec<u64>>();
+				let mut nodes = parse_attr_nodes(nodes_file)?;
+				nodes.sort_by(|a,b| a.node_id.cmp(&b.node_id));
+	            //dbg!(nodes.clone());
+	            //dbg!(edges.clone());
+	            
+	            let alpha_unit = 50.0;
+	            for alpha in 0..50 {
+					let alpha_split = Instant::now();
+					for rep in 0..50 {
+						let nodes_redacted = remove_attrs(nodes.clone(),(alpha as f64)/alpha_unit);
+						//dbg!(nodes_redacted.clone());
+						let mut network: SimpleNetwork<AttrNode> = SimpleNetwork::from_node_vec(nodes_redacted.clone());
+		            	for edge in &edges {
+							let from_node = nodes_redacted.iter().find(|&x| x.node_id == edge.from);
+							let to_node = nodes_redacted.iter().find(|&x| x.node_id == edge.to);
+							if from_node.is_some() && to_node.is_some() {
+								network.add_edge(*from_node.unwrap(), *to_node.unwrap())?;
+							}
+		            	}
+		            	//dbg!(network.clone());
+		            	
+		            	let num_observed = ((nodes.len() as f64)*(alpha as f64)/alpha_unit) as usize;
+		            	let mut baseline;
+		            	if num_observed > 0{
+							baseline = nodes_redacted.iter().map(|&x| x.attr).collect::<Vec<i32>>();
+						} else {
+							baseline = nodes.iter().map(|&x| x.attr).collect::<Vec<i32>>();
+						}
+						baseline.sort();
+						baseline.dedup();
+		            	
+		            	let mut inferred = infer_attrs(network,baseline);
+		            	let num_guessed = inferred.len() - ((nodes.len() as f64)*(alpha as f64)/alpha_unit) as usize;
+		            	inferred.sort_by(|a,b| a.node_id.cmp(&b.node_id));
+		            	let num_wrong = inferred.iter().zip(nodes.clone().iter()).filter(|(a,b)| a.attr != b.attr).count();
+		            	let acc = 1.0 - (num_wrong as f64)/(num_guessed as f64);
+		            	
+		            	//dbg!(inferred.clone());
+		            	let config_c_mgd = File::options()
+	                    .append(true)
+	                    .create(true)
+	                    .open("src/output/hw3_p1.csv")?;
+						
+						
+						//output
+						//dbg!(network.clone());
+	                	to_csv(&name, &[(alpha as f64)/alpha_unit, acc], &[], config_c_mgd)?;
+					}
+					let alpha_time = alpha_split.elapsed();
+            		let elapsed = now.elapsed();
+		           	println!("alpha={} done in: {:.2?}, Total: {:.2?}", alpha, alpha_time, elapsed);
+				}
+	            
+	            
 			}
-            //dbg!(nodes.clone());
-            //dbg!(edges.clone());
+			//hw3 edge inference
+			else if args.edge_inf {
+				println!("Opening {}",filename_edges.clone());
+	            let edges_file = File::open(filename_edges.clone())?;
+	            
+	            let path = Path::new(&filename_edges);
+	            let name = path.file_stem().unwrap().to_str().unwrap();
+	            
+	            let edges = parse_edges(edges_file)?;
 
-            let mut network: SimpleNetwork<u64> = SimpleNetwork::from_node_vec(nodes);
-            for edge in edges {
-                network.add_edge(edge.from, edge.to)?;
-            }
-            //dbg!(network.clone());
-            
+				println!("Opening {}",filename_nodes.clone());
+				let nodes_file = File::open(filename_nodes.clone())?;
+				let nodes = parse_attr_nodes(nodes_file)?;
+				
+				
+				let mut full_network: SimpleNetwork<AttrNode> = SimpleNetwork::from_node_vec(nodes.clone());
+		        for edge in &edges {
+					let from_node = nodes.iter().find(|&x| x.node_id == edge.from);
+					let to_node = nodes.iter().find(|&x| x.node_id == edge.to);
+					if from_node.is_some() && to_node.is_some() {
+						full_network.add_edge(*from_node.unwrap(), *to_node.unwrap())?;
+					}
+		   		}
+	            
+	            let edges_as_pairs = full_network.edgelist();
+	            
+	            //dbg!(nodes.clone());
+	            //dbg!(edges.clone());
+	            let alpha_unit = 20.0;
+	            for alpha in 0..20 {
+					let alpha_split = Instant::now();
+					for rep in 0..50 {
+						let edges_redacted = remove_edges(edges.clone(),(alpha as f64)/alpha_unit);
+						//dbg!(nodes_redacted.clone());
+						let mut network: SimpleNetwork<AttrNode> = SimpleNetwork::from_node_vec(nodes.clone());
+		            	for edge in &edges_redacted {
+							let from_node = nodes.iter().find(|&x| x.node_id == edge.from);
+							let to_node = nodes.iter().find(|&x| x.node_id == edge.to);
+							if from_node.is_some() && to_node.is_some() {
+								network.add_edge(*from_node.unwrap(), *to_node.unwrap())?;
+							}
+		            	}
+		            	//dbg!(network.clone());
+		            	
+		            	//let score_split = Instant::now();
+		            	let j_scores = jaccard_scores(network.clone());
+		            	let d_scores = dp_scores(network.clone());
+		            	let s_scores = sp_scores(network.clone());
+		            	//dbg!(score_split.elapsed());
+		            	//dbg!(j_scores.len());
+		            	//dbg!(j_scores.clone());
+		            	//dbg!(d_scores.clone());
+		            	//dbg!(s_scores.clone());
+		            	let j_roc = roc(j_scores,edges_as_pairs.clone());
+		            	let d_roc = roc(d_scores,edges_as_pairs.clone());
+		            	let s_roc = roc(s_scores,edges_as_pairs.clone());
+		            	//dbg!(score_split.elapsed());
+
+		            	
+		            	if alpha == 16 && rep == 0 {
+							let j_roc_file = File::options()
+	                    	.append(true)
+	                    	.create(true)
+	                    	.open("src/output/hw3_jroc.csv")?;
+						
+							//output
+							//dbg!(network.clone());
+							for item in &j_roc {
+	                			to_csv(&name, &[item.0,item.1], &[], j_roc_file.try_clone()?)?;
+	                		}
+	                		let d_roc_file = File::options()
+	                    	.append(true)
+	                    	.create(true)
+	                    	.open("src/output/hw3_droc.csv")?;
+						
+							//output
+							//dbg!(network.clone());
+							for item in &d_roc {
+	                			to_csv(&name, &[item.0,item.1], &[], d_roc_file.try_clone()?)?;
+	                		}
+	                		let s_roc_file = File::options()
+	                    	.append(true)
+	                    	.create(true)
+	                    	.open("src/output/hw3_sroc.csv")?;
+						
+							//output
+							//dbg!(network.clone());
+							for item in &s_roc {
+	                			to_csv(&name, &[item.0,item.1], &[], s_roc_file.try_clone()?)?;
+	                		}
+						}
+						
+						let mut j_auc = 0.0;
+						let mut d_auc = 0.0;
+						let mut s_auc = 0.0;
+						//dbg!(j_roc.clone());
+						//dbg!(d_roc.clone());
+						//dbg!(s_roc.clone());
+						
+						for i in 1..j_roc.len(){
+							j_auc += j_roc[i].0*(j_roc[i].1 - j_roc[i-1].1);
+							d_auc += d_roc[i].0*(d_roc[i].1 - d_roc[i-1].1);
+							s_auc += s_roc[i].0*(s_roc[i].1 - s_roc[i-1].1);
+						}
+		            	//dbg!(score_split.elapsed());
+		            	
+		            	//dbg!(inferred.clone());
+		            	let config_c_mgd = File::options()
+	                    .append(true)
+	                    .create(true)
+	                    .open("src/output/hw3_p2.csv")?;
+						
+						
+						//output
+						//dbg!(network.clone());
+	                	to_csv(&name, &[(alpha as f64)/alpha_unit,j_auc,d_auc,s_auc], &[], config_c_mgd)?;
+					}
+					let alpha_time = alpha_split.elapsed();
+            		let elapsed = now.elapsed();
+		           	println!("alpha={} done in: {:.2?}, Total: {:.2?}", alpha, alpha_time, elapsed);
+				}
+	            
+			}
             //config model 1000x C and mgd
-            if args.cnull_model {
+            else if args.cnull_model {
                 //dbg!("output two open");
+                println!("Opening {}",filename_edges.clone());
+	            let edges_file = File::open(filename_edges.clone())?;
+	            
+	            let path = Path::new(&filename_edges);
+	            let name = path.file_stem().unwrap().to_str().unwrap();
+	            
+	            let edges = parse_edges(edges_file)?;
+	
+	            let nodes;
+				if filename_nodes != "" {
+					println!("Opening {}",filename_nodes.clone());
+					let nodes_file = File::open(filename_nodes.clone())?;
+					nodes = parse_basic_nodes(nodes_file)?;
+				} else {
+					nodes = edges.clone().iter().flat_map(|edge| [edge.from, edge.to]).collect::<Vec<u64>>();
+				}
+	            //dbg!(nodes.clone());
+	            //dbg!(edges.clone());
+                
+	            let mut network: SimpleNetwork<u64> = SimpleNetwork::from_node_vec(nodes);
+	            for edge in edges {
+	                network.add_edge(edge.from, edge.to)?;
+	            }
+	            //dbg!(network.clone());
                 
                 let reps = 1000;
                 let init = 10*network.total_edges;

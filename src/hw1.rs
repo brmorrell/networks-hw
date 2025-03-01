@@ -56,7 +56,7 @@ pub fn parse_basic_nodes<R: std::io::Read>(input: R) -> Result<Vec<u64>, csv::Er
 /// A record of a edge
 ///
 /// This represents a single row of the edges file.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Copy)]
 pub struct Edge {
     pub from: u64,
     pub to: u64,
@@ -102,6 +102,42 @@ pub fn parse_adjacency_list<R: std::io::Read>(input: R) -> Result<Vec<Adjacency<
     Ok(end_list)
         
 }
+
+
+#[derive(Debug, Default, Deserialize, PartialEq, Clone, Copy, Ord, Eq, PartialOrd, Hash)]
+pub struct AttrNode {
+    pub node_id: u64,
+    pub attr: i32,
+}
+
+impl std::fmt::Display for AttrNode {
+	
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		
+        write!(f,"{}: {}", self.node_id, self.attr)
+    }
+}
+
+impl Node for AttrNode {
+	fn id(&self) -> u64 {
+		self.node_id
+	}
+}
+
+pub fn parse_attr_nodes<R: std::io::Read>(input: R) -> Result<Vec<AttrNode>, csv::Error> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(b',')
+        .comment(Some(b'#'))
+        .from_reader(input);
+
+    rdr.deserialize()
+        // `Result` implements fromiterator, so when we collect this it will give us the first
+        // error if there are any errors, or else will give us the vector of [`NodeData`]s.
+        .collect()
+}
+
+
 
 #[cfg(test)]
 mod tests {

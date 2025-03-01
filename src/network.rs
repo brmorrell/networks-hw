@@ -2,7 +2,9 @@ use std::collections::{HashSet, HashMap, BinaryHeap};
 use std::cmp::{Reverse,max};
 use anyhow::anyhow;
 use rand::Rng;
+use std::time::Instant;
 
+//TODO: finish documentation for hw2/3
 
 use crate::hw1::Adjacency;
 use crate::node::Node;
@@ -265,6 +267,56 @@ impl<N: Node> SimpleNetwork<N> {
 		}
 		result
 		
+	}
+	
+	pub fn get_adjs(&self, node: N) -> Option<&HashSet<N>> {
+		self.adjacencies.get(&node)
+	}
+	
+	pub fn get_nonedges(&self) -> HashSet<(N,N)> {
+		let mut pairs = HashSet::new();
+		for src in self.nodes.clone() {
+			//let split = Instant::now();
+			for dest in self.nodes.clone() {
+				if let Some(adjs) = self.adjacencies.get(&src) {
+								//let split2 = Instant::now();
+
+					if src != dest && !adjs.contains(&dest) {
+						pairs.insert((src,dest));
+					}
+								//dbg!(split2.elapsed());
+
+				}
+			}
+			//dbg!(split.elapsed());
+
+		}
+		pairs
+	}
+	
+	pub fn edgelist(&self) -> HashSet<(N,N)> {
+		let mut pairs = HashSet::new();
+		for src in self.nodes.clone() {
+			if let Some(adjs) = self.adjacencies.get(&src) {
+				for dst in adjs {
+					pairs.insert((src,dst.clone()));
+				}
+			}
+		}
+		pairs
+	}
+	
+	//uses node ids, will take a lot of space
+	//assumes that node ids are 0..n-1
+	pub fn apsp(&self) -> Vec<Vec<i64>> {
+		let mut all_paths = vec![vec![-1; self.nodes.len()]; self.nodes.len()];
+		for node in self.nodes.clone(){
+			let paths = self.sssp(node);
+			for (dst,length) in paths {
+				all_paths[node.id() as usize][dst.id() as usize] = length;
+			}
+		}
+		all_paths
 	}
 	
 }

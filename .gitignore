@@ -1,4 +1,6 @@
 /target
-src/data/facebook100txt/*
+src/data/*
 src/output/*
 src/plot_figures.asv
+src/plots_hw2.asv
+src/plots_hw2.asv
