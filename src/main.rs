@@ -6,7 +6,7 @@ use std::collections::{HashSet,HashMap};
 use rand::Rng;
 
 
-use hw5352::{hw1::parse_edges, hw1::parse_nodes, hw1::AttrNode, hw1::parse_basic_nodes, hw1::parse_attr_nodes, hw1::parse_adjacency_list, output::to_csv, SimpleNetwork, statistic::remove_attrs, statistic::infer_attrs, statistic::remove_edges, statistic::jaccard_scores, statistic::dp_scores, statistic::sp_scores, statistic::roc};
+use hw5352::{hw1::parse_edges, hw1::parse_nodes, hw1::AttrNode, hw1::parse_basic_nodes, hw1::parse_attr_nodes, hw1::parse_adjacency_list, output::to_csv, SimpleNetwork, statistic::remove_attrs, statistic::infer_attrs, statistic::remove_edges, statistic::jaccard_scores, statistic::dp_scores, statistic::sp_scores, statistic::roc, partition::compute_mixing_matrix, partition::log_likelyhood_DCSBM, partition::makeAMove, partition::runOnePhase, partition::fitDCSBM, node::Node};
 
 use clap::Parser;
 
@@ -38,22 +38,24 @@ struct Args {
     cnull_model: bool,
     
     #[clap(long, short, action)]
-    strogatz: bool,
+    partition: bool,
 }
 //TODO: add documentation
 //good luck reading it until then
 
-/// Call with: cargo run [--release] -- [HW1] [options]
+/// Call with: cargo run [--release] -- -w <number> -n <name> options]
 /// Can also use cargo run -- --help to view full auto-generated
 /// options list as they might not all be here
 /// Universal Options:
 ///		[-n]  			file/folder name (no extension or "_attr")
 ///		[-f]			specifies to run on every file within target folder, rather than on a single data set
-/// W0 Options:			(watts-strogatz)
+/// W0 Options:			watts-strogatz testing
 /// W1 Options:
 ///		[-d]			compute degree measures
 ///		[-l]			compute distance measures
 /// 	[-c]			config model rewiring, gather stats at each step
+/// 	[-p]			run dc-sbm partition tests
+/// 	[-a]			run dc-sbm community detection repeatedly
 /// W2 Options:
 /// 	[-c]			generate null model for C and mgd using config model
 /// 	[-a]			delete and infer node attributes
@@ -216,6 +218,160 @@ fn main() -> anyhow::Result<()> {
                	}
                 println!(".");
 			}
+			
+			if args.partition {
+				//part (a) of HW4 P4 - c=3, random partition, f_2 = 1 but all else 0
+				let mut rng = rand::thread_rng();
+				let mut partition = HashMap::new();
+				let c = 3;
+				for node in &network.nodes {
+					if node.id() == 2 {
+						partition.insert(*node, (rng.gen_range(0..c), true));
+					} else {
+						partition.insert(*node, (rng.gen_range(0..c), false));
+					}
+				}
+				let mut mixing_matrix = compute_mixing_matrix(&network, c, &partition);
+				let mut grp_degrees = vec![];
+				for grp in &mixing_matrix {
+					grp_degrees.push(grp.iter().sum());
+				}
+				
+				let init_likelyhood = log_likelyhood_DCSBM(&mixing_matrix,&grp_degrees);
+				let (new_likelyhood, (moved_node, dst)) = makeAMove(&network, &partition, c);
+				for (node, (grp,frozen)) in partition {
+					let config_onemove = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_onemove.csv")?;
+						
+					//dbg!(network.clone());
+	              	to_csv("Node", &[init_likelyhood], &[node.id(),grp as u64], config_onemove)?;
+	               	dbg!(".");
+	            }
+	            let config_onemove = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_onemove.csv")?;
+						
+					//dbg!(network.clone());
+	              	to_csv("Move", &[new_likelyhood], &[moved_node.id(),dst as u64], config_onemove)?;
+	               	dbg!(".");
+	               	
+	            //part (b) - test one phase
+				let mut partition2 = HashMap::new();
+				for node in &network.nodes {
+					if node.id() == 2 {
+						partition2.insert(*node, (rng.gen_range(0..c), false));
+					} else {
+						partition2.insert(*node, (rng.gen_range(0..c), false));
+					}
+				}
+				
+				let (new_partition2, new_likelyhood2, halt, likelyhoods) = runOnePhase(&network, partition2.clone(), c);
+				for (node, (grp,frozen)) in partition2 {
+					let config_onephase = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_onephase.csv")?;
+					if let Some((new_grp,_)) = new_partition2.get(&node) {
+						//dbg!(network.clone());
+	              		to_csv("Node", &[], &[node.id(),grp as u64,*new_grp as u64], config_onephase)?;
+	               		dbg!(".");
+	               	}
+	            }
+				let config_onephase_ls = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_onephase_ls.csv")?;
+				//dbg!(network.clone());
+	            to_csv(&name, &likelyhoods, &[], config_onephase_ls)?;
+	            dbg!(".");
+	            
+	            //part (c) - fitDCSBM once with T=30
+	            
+	            let (partition3, likelyhood3, likelyhoods3) = fitDCSBM(network.clone(), c, 30);
+				let mixing_matrix = compute_mixing_matrix(&network, c, &partition3);
+				for (node, (grp,frozen)) in partition3 {
+					let config_sample = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_samplegraph.csv")?;
+					//dbg!(network.clone());
+	              	to_csv(&name, &[], &[node.id(),grp as u64], config_sample)?;
+	            	dbg!(".");
+	            }
+	            for row in mixing_matrix {
+					let config_sample = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_samplematrix.csv")?;
+					//dbg!(network.clone());
+					let mut row_u64 = vec![];
+					for item in row {
+						row_u64.push(item as u64);
+					}
+	              	to_csv(&name, &[], &row_u64, config_sample)?;
+	            	dbg!(".");
+	            }
+				let config_sample = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_samplels.csv")?;
+				//dbg!(network.clone());
+	            to_csv(&name, &likelyhoods3, &[], config_sample)?;
+	            dbg!(".");
+			}
+			
+			if args.attr_inf {
+				let reps = 5;
+				let c = 2;
+				let T = 30;
+				let mut best_partition = HashMap::new();
+				let mut best_likelyhood = 0.0;
+				let mut best_likelyhoods = vec![];
+				let mut attempt = 0;
+				//dbg!(network.clone());
+				for i in 0..reps {
+					let (partition, likelyhood, likelyhoods) = fitDCSBM(network.clone(), c, T);
+					if best_likelyhood == 0.0 || likelyhood > best_likelyhood {
+						(best_partition, best_likelyhood, best_likelyhoods) = (partition, likelyhood, likelyhoods);
+						attempt = i+1;
+					}
+				}
+				let mixing_matrix = compute_mixing_matrix(&network, c, &best_partition);
+				for (node, (grp,frozen)) in best_partition {
+					let config_graph = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_partition_graph.csv")?;
+					//dbg!(network.clone());
+	              	to_csv(&name, &[], &[attempt,node.id(),grp as u64], config_graph)?;
+	            	dbg!(".");
+	            }
+	            for row in mixing_matrix {
+					let config_matrix = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_matrix.csv")?;
+					//dbg!(network.clone());
+					let mut row_u64 = vec![];
+					for item in row {
+						row_u64.push(item as u64);
+					}
+	              	to_csv(&name, &[], &row_u64, config_matrix)?;
+	            	dbg!(".");
+	            }
+				let config_ls = File::options()
+		                    .append(true)
+		                    .create(true)
+		                    .open("src/output/hw4_ls_list.csv")?;
+				//dbg!(network.clone());
+	            to_csv(&name, &best_likelyhoods, &[], config_ls)?;
+	            dbg!(".");
+				
+			}
+			
             
             let partial_time = split.elapsed();
             let elapsed = now.elapsed();
